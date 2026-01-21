@@ -331,6 +331,19 @@ const styles = `
   text-decoration-line: underline line-through !important;
   text-decoration-thickness: 2px !important;
 }
+
+/* Reset styles to inherit when data attributes are NOT set */
+.annotate-highlight:not([data-underline="true"]):not([data-strikethrough="true"]) {
+  text-decoration: inherit !important;
+}
+
+.annotate-highlight:not([data-bold="true"]) {
+  font-weight: inherit !important;
+}
+
+.annotate-highlight:not([data-color]) {
+  background-color: transparent !important;
+}
 `;
 
 function injectStyles() {
@@ -480,6 +493,15 @@ class AnnotateSaver {
     return `${this.getXPath(parent)}/${element.tagName.toLowerCase()}[${index}]`;
   }
 
+  private isValidParent(node: Node | null): boolean {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return true;
+    const tagName = (node as Element).tagName.toUpperCase();
+    // These elements should not have direct text children wrapped in spans
+    // as it breaks the table structure
+    const invalidTags = ['TR', 'TBODY', 'THEAD', 'TFOOT', 'TABLE', 'COLGROUP', 'COL'];
+    return !invalidTags.includes(tagName);
+  }
+
   private applyTextAnnotation(node: Node, annotation: TextAnnotation) {
     if (node.nodeType !== Node.TEXT_NODE) return;
 
@@ -508,7 +530,7 @@ class AnnotateSaver {
     wrapper.textContent = highlighted;
 
     const parent = node.parentNode;
-    if (!parent) return;
+    if (!parent || !this.isValidParent(parent)) return;
 
     const fragment = document.createDocumentFragment();
     if (before) fragment.appendChild(document.createTextNode(before));
@@ -642,7 +664,7 @@ class AnnotateSaver {
     return `
       <div class="annotate-draw-tools">
         <div style="font-size: 11px; color: #888; padding: 4px 0 8px 0; line-height: 1.4;">
-          Select any text on the page to highlight, underline, bold, or strikethrough
+          Select any text on the page to underline, bold, or strikethrough
         </div>
       </div>
     `;
@@ -959,13 +981,11 @@ class AnnotateSaver {
 
     // Check for existing annotation to show active states
     const existingHighlight = this.findExistingHighlight(range);
-    let hasColor = false;
     let hasUnderline = false;
     let hasBold = false;
     let hasStrikethrough = false;
 
     if (existingHighlight) {
-      hasColor = !!existingHighlight.dataset.color;
       hasUnderline = existingHighlight.dataset.underline === 'true';
       hasBold = existingHighlight.dataset.bold === 'true';
       hasStrikethrough = existingHighlight.dataset.strikethrough === 'true';
@@ -974,13 +994,7 @@ class AnnotateSaver {
     this.tooltip = document.createElement('div');
     this.tooltip.className = 'annotate-text-tooltip';
     this.tooltip.innerHTML = `
-      <button class="annotate-tooltip-btn ${hasColor ? 'active' : ''}" data-action="color" title="Highlight">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="#facc15" stroke="#facc15" stroke-width="2">
-          <path d="M12 2L4 7l8 5 8-5-8-5z"/>
-          <path d="M4 12l8 5 8-5"/>
-          <path d="M4 17l8 5 8-5"/>
-        </svg>
-      </button>
+
       <button class="annotate-tooltip-btn ${hasUnderline ? 'active' : ''}" data-action="underline" title="Underline">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <path d="M6 4v6a6 6 0 0 0 12 0V4"/>
@@ -1018,9 +1032,6 @@ class AnnotateSaver {
 
     document.body.appendChild(this.tooltip);
 
-    // Color dropdown state
-    let colorDropdown: HTMLElement | null = null;
-
     // Add click handlers
     const buttons = this.tooltip.querySelectorAll('.annotate-tooltip-btn');
     buttons.forEach(btn => {
@@ -1029,14 +1040,7 @@ class AnnotateSaver {
         e.stopPropagation();
         const action = (e.currentTarget as HTMLElement).dataset.action;
 
-        if (action === 'color') {
-          if (colorDropdown) {
-            colorDropdown.remove();
-            colorDropdown = null;
-          } else {
-            colorDropdown = this.showColorDropdown(btn as HTMLElement);
-          }
-        } else if (action === 'remove') {
+        if (action === 'remove') {
           this.removeAnnotation();
         } else {
           this.applyStyle(action as string);
@@ -1045,52 +1049,13 @@ class AnnotateSaver {
     });
   }
 
-  private showColorDropdown(anchor: HTMLElement): HTMLElement {
-    const dropdown = document.createElement('div');
-    dropdown.className = 'annotate-color-dropdown';
 
-    const colors = [
-      { name: 'yellow', color: '#facc15' },
-      { name: 'green', color: '#22c55e' },
-      { name: 'blue', color: '#3b82f6' },
-      { name: 'pink', color: '#ec4899' },
-    ];
-
-    colors.forEach(({ name, color }) => {
-      const btn = document.createElement('button');
-      btn.className = 'annotate-color-btn';
-      btn.style.background = color;
-      btn.dataset.colorName = name;
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.applyStyle('color', name);
-        dropdown.remove();
-      });
-      dropdown.appendChild(btn);
-    });
-
-    // Get tooltip position to align dropdown with it
-    const tooltipRect = this.tooltip?.getBoundingClientRect();
-    const anchorRect = anchor.getBoundingClientRect();
-
-    dropdown.style.position = 'fixed';
-    // Left-align with the tooltip, not the button
-    dropdown.style.left = tooltipRect ? `${tooltipRect.left}px` : `${anchorRect.left}px`;
-    // Add more spacing between tooltip and dropdown (12px instead of 6px)
-    dropdown.style.top = `${anchorRect.bottom + 12}px`;
-
-    document.body.appendChild(dropdown);
-    return dropdown;
-  }
 
   private hideTooltip() {
     if (this.tooltip) {
       this.tooltip.remove();
       this.tooltip = null;
     }
-    // Also remove any color dropdowns
-    document.querySelectorAll('.annotate-color-dropdown').forEach(el => el.remove());
   }
 
   private applyStyle(action: string, colorName?: string) {
@@ -1099,62 +1064,175 @@ class AnnotateSaver {
     const selection = window.getSelection();
     if (!selection) return;
 
-    // Check if we're modifying an existing annotation
-    const existingHighlight = this.findExistingHighlight(this.selectedRange);
+    // Get ALL highlights in the selection range
+    const existingHighlights = this.getAllHighlightsInRange(this.selectedRange);
 
-    if (existingHighlight) {
-      // Update existing annotation
-      const annotationId = existingHighlight.dataset.annotationId;
-      const annotation = this.textAnnotations.find(a => a.id === annotationId);
+    if (existingHighlights.length > 0) {
+      // There are existing highlights in the selection
+      // Check if this is a pure update (selection only contains existing highlights)
+      // or a mixed selection (some decorated, some not)
 
-      if (annotation) {
-        switch (action) {
-          case 'color':
-            if (colorName) {
-              annotation.style.color = colorName;
-              existingHighlight.dataset.color = colorName;
-            } else {
-              annotation.style.color = undefined;
-              delete existingHighlight.dataset.color;
-            }
+      // For simplicity, we'll handle this by:
+      // 1. First, check if the action is a toggle (underline, bold, strikethrough)
+      // 2. If toggle and all have the style, treat as removal
+      // 3. If toggle and some/none have the style, apply to all
+      // 4. For color, always apply the specified color
+
+      // Determine if we're toggling off (all highlights have this style)
+      let allHaveStyle = true;
+      if (action !== 'color') {
+        for (const highlight of existingHighlights) {
+          const hasStyle = highlight.dataset[action] === 'true';
+          if (!hasStyle) {
+            allHaveStyle = false;
             break;
-          case 'underline':
-            annotation.style.underline = !annotation.style.underline;
-            if (annotation.style.underline) {
-              existingHighlight.dataset.underline = 'true';
-            } else {
-              delete existingHighlight.dataset.underline;
-            }
-            break;
-          case 'bold':
-            annotation.style.bold = !annotation.style.bold;
-            if (annotation.style.bold) {
-              existingHighlight.dataset.bold = 'true';
-            } else {
-              delete existingHighlight.dataset.bold;
-            }
-            break;
-          case 'strikethrough':
-            annotation.style.strikethrough = !annotation.style.strikethrough;
-            if (annotation.style.strikethrough) {
-              existingHighlight.dataset.strikethrough = 'true';
-            } else {
-              delete existingHighlight.dataset.strikethrough;
-            }
-            break;
+          }
         }
-
-        // Check if annotation has no styles left, remove it entirely
-        if (!annotation.style.color && !annotation.style.underline &&
-            !annotation.style.bold && !annotation.style.strikethrough) {
-          this.removeAnnotation();
-          return;
-        }
-
-        this.saveState();
+      } else {
+        // For color, check if we're removing (colorName is undefined)
+        allHaveStyle = colorName === undefined;
       }
+
+      // Collect all base IDs affected
+      const affectedBaseIds: string[] = [];
+      existingHighlights.forEach(highlight => {
+        const annotationId = highlight.dataset.annotationId;
+        if (annotationId) {
+          const parts = annotationId.split('_');
+          const lastPart = parts[parts.length - 1];
+          const baseId = /^\d+$/.test(lastPart) && parts.length > 1
+            ? parts.slice(0, -1).join('_')
+            : annotationId;
+          if (!affectedBaseIds.includes(baseId)) {
+            affectedBaseIds.push(baseId);
+          }
+        }
+      });
+
+      // Update all related annotations and DOM elements
+
+      affectedBaseIds.forEach(baseId => {
+        // Find all annotations with this base ID
+        this.textAnnotations.forEach(annotation => {
+          const parts = annotation.id.split('_');
+          const lastPart = parts[parts.length - 1];
+          const annotationBaseId = /^\d+$/.test(lastPart) && parts.length > 1
+            ? parts.slice(0, -1).join('_')
+            : annotation.id;
+
+          if (annotationBaseId === baseId) {
+            // Update the annotation style
+            switch (action) {
+
+              case 'underline':
+                annotation.style.underline = !allHaveStyle;
+                break;
+              case 'bold':
+                annotation.style.bold = !allHaveStyle;
+                break;
+              case 'strikethrough':
+                annotation.style.strikethrough = !allHaveStyle;
+                break;
+            }
+          }
+        });
+
+        // Update all DOM elements with this base ID
+        document.querySelectorAll('.annotate-highlight').forEach(el => {
+          const elId = (el as HTMLElement).dataset.annotationId;
+          if (elId) {
+            const elParts = elId.split('_');
+            const elLastPart = elParts[elParts.length - 1];
+            const elBaseId = /^\d+$/.test(elLastPart) && elParts.length > 1
+              ? elParts.slice(0, -1).join('_')
+              : elId;
+
+            if (elBaseId === baseId) {
+              const element = el as HTMLElement;
+              switch (action) {
+
+                case 'underline':
+                  if (!allHaveStyle) {
+                    element.dataset.underline = 'true';
+                  } else {
+                    delete element.dataset.underline;
+                  }
+                  break;
+                case 'bold':
+                  if (!allHaveStyle) {
+                    element.dataset.bold = 'true';
+                  } else {
+                    delete element.dataset.bold;
+                  }
+                  break;
+                case 'strikethrough':
+                  if (!allHaveStyle) {
+                    element.dataset.strikethrough = 'true';
+                  } else {
+                    delete element.dataset.strikethrough;
+                  }
+                  break;
+              }
+            }
+          }
+        });
+      });
+
+      // Check if any annotations now have no styles - if so, remove them
+      const annotationsToRemove: string[] = [];
+      this.textAnnotations.forEach(annotation => {
+        if (!annotation.style.color && !annotation.style.underline &&
+          !annotation.style.bold && !annotation.style.strikethrough) {
+          const parts = annotation.id.split('_');
+          const lastPart = parts[parts.length - 1];
+          const baseId = /^\d+$/.test(lastPart) && parts.length > 1
+            ? parts.slice(0, -1).join('_')
+            : annotation.id;
+          if (!annotationsToRemove.includes(baseId)) {
+            annotationsToRemove.push(baseId);
+          }
+        }
+      });
+
+      // Remove annotations with no styles
+      if (annotationsToRemove.length > 0) {
+        this.textAnnotations = this.textAnnotations.filter(a => {
+          const parts = a.id.split('_');
+          const lastPart = parts[parts.length - 1];
+          const baseId = /^\d+$/.test(lastPart) && parts.length > 1
+            ? parts.slice(0, -1).join('_')
+            : a.id;
+          return !annotationsToRemove.includes(baseId);
+        });
+
+        // Unwrap DOM elements
+        annotationsToRemove.forEach(baseId => {
+          document.querySelectorAll('.annotate-highlight').forEach(el => {
+            const elId = (el as HTMLElement).dataset.annotationId;
+            if (elId) {
+              const elParts = elId.split('_');
+              const elLastPart = elParts[elParts.length - 1];
+              const elBaseId = /^\d+$/.test(elLastPart) && elParts.length > 1
+                ? elParts.slice(0, -1).join('_')
+                : elId;
+              if (elBaseId === baseId) {
+                const parent = el.parentNode;
+                if (parent) {
+                  while (el.firstChild) {
+                    parent.insertBefore(el.firstChild, el);
+                  }
+                  parent.removeChild(el);
+                  parent.normalize();
+                }
+              }
+            }
+          });
+        });
+      }
+
+      this.saveState();
     } else {
-      // Create new annotation
+      // Create new annotation - no existing highlights in selection
       const baseId = generateId();
       const style = {
         color: action === 'color' ? colorName : undefined,
@@ -1225,7 +1303,7 @@ class AnnotateSaver {
         if (!text) continue;
 
         const parent = textNode.parentNode;
-        if (!parent) continue;
+        if (!parent || !this.isValidParent(parent)) continue;
 
         // Create a new wrapper for this text node (clone the template)
         const wrapper = wrapperTemplate.cloneNode(false) as HTMLElement;
@@ -1297,10 +1375,10 @@ class AnnotateSaver {
 
     // Handle single text node case directly (most common)
     if (range.startContainer === range.endContainer &&
-        range.startContainer.nodeType === Node.TEXT_NODE) {
+      range.startContainer.nodeType === Node.TEXT_NODE) {
       const textNode = range.startContainer as Text;
       if (textNode.textContent &&
-          range.endOffset > range.startOffset) {
+        range.endOffset > range.startOffset) {
         textNodes.push(textNode);
       }
       return textNodes;
@@ -1330,7 +1408,7 @@ class AnnotateSaver {
 
           // Check if ranges overlap
           if (range.compareBoundaryPoints(Range.END_TO_START, nodeRange) <= 0 &&
-              range.compareBoundaryPoints(Range.START_TO_END, nodeRange) >= 0) {
+            range.compareBoundaryPoints(Range.START_TO_END, nodeRange) >= 0) {
             textNodes.push(textNode);
           }
         }
@@ -1341,36 +1419,130 @@ class AnnotateSaver {
     return textNodes;
   }
 
-  private findExistingHighlight(range: Range): HTMLElement | null {
+  /**
+   * Find all highlight elements that intersect with the given range.
+   * This handles mixed selections where only part of the selection is highlighted.
+   */
+  private getAllHighlightsInRange(range: Range): HTMLElement[] {
+    const highlights: HTMLElement[] = [];
+    const seen = new Set<string>();
+
+    // Check if start container is inside a highlight
     let node: Node | null = range.startContainer;
-    while (node) {
+    while (node && node !== document.body) {
       if (node instanceof HTMLElement && node.classList.contains('annotate-highlight')) {
-        return node;
+        const id = node.dataset.annotationId;
+        if (id && !seen.has(id)) {
+          seen.add(id);
+          highlights.push(node);
+        }
+        break;
       }
       node = node.parentNode;
     }
-    return null;
+
+    // Check if end container is inside a highlight
+    node = range.endContainer;
+    while (node && node !== document.body) {
+      if (node instanceof HTMLElement && node.classList.contains('annotate-highlight')) {
+        const id = node.dataset.annotationId;
+        if (id && !seen.has(id)) {
+          seen.add(id);
+          highlights.push(node);
+        }
+        break;
+      }
+      node = node.parentNode;
+    }
+
+    // Also find any highlights that are completely within the range
+    const commonAncestor = range.commonAncestorContainer;
+    const container = commonAncestor instanceof Element ? commonAncestor : commonAncestor.parentElement;
+    if (container) {
+      const allHighlights = container.querySelectorAll('.annotate-highlight');
+      allHighlights.forEach(el => {
+        if (range.intersectsNode(el)) {
+          const id = (el as HTMLElement).dataset.annotationId;
+          if (id && !seen.has(id)) {
+            seen.add(id);
+            highlights.push(el as HTMLElement);
+          }
+        }
+      });
+    }
+
+    return highlights;
   }
+
+  /**
+   * Legacy method for backwards compatibility - returns the first highlight found.
+   */
+  private findExistingHighlight(range: Range): HTMLElement | null {
+    const highlights = this.getAllHighlightsInRange(range);
+    return highlights.length > 0 ? highlights[0] : null;
+  }
+
 
   private removeAnnotation() {
     if (!this.selectedRange) return;
 
-    const highlight = this.findExistingHighlight(this.selectedRange);
-    if (highlight) {
-      const annotationId = highlight.dataset.annotationId;
+    // Get ALL highlights in the selection range
+    const highlights = this.getAllHighlightsInRange(this.selectedRange);
 
-      // Remove from state
-      this.textAnnotations = this.textAnnotations.filter(a => a.id !== annotationId);
+    if (highlights.length > 0) {
+      // Collect all base IDs to remove
+      const baseIdsToRemove: string[] = [];
 
-      // Unwrap the element
-      const parent = highlight.parentNode;
-      if (parent) {
-        while (highlight.firstChild) {
-          parent.insertBefore(highlight.firstChild, highlight);
+      highlights.forEach(highlight => {
+        const annotationId = highlight.dataset.annotationId;
+        if (annotationId) {
+          // Extract base ID (remove _0, _1 suffix if present)
+          const parts = annotationId.split('_');
+          const lastPart = parts[parts.length - 1];
+          const baseId = /^\d+$/.test(lastPart) && parts.length > 1
+            ? parts.slice(0, -1).join('_')
+            : annotationId;
+          if (!baseIdsToRemove.includes(baseId)) {
+            baseIdsToRemove.push(baseId);
+          }
         }
-        parent.removeChild(highlight);
-        parent.normalize();
-      }
+      });
+
+      // Remove all annotations with matching base IDs from state
+      this.textAnnotations = this.textAnnotations.filter(a => {
+        const parts = a.id.split('_');
+        const lastPart = parts[parts.length - 1];
+        const baseId = /^\d+$/.test(lastPart) && parts.length > 1
+          ? parts.slice(0, -1).join('_')
+          : a.id;
+        return !baseIdsToRemove.includes(baseId);
+      });
+
+      // Find and remove ALL related highlight spans from DOM (including those not in selection)
+      baseIdsToRemove.forEach(baseId => {
+        // Find all elements with this base ID or baseId_N pattern
+        document.querySelectorAll('.annotate-highlight').forEach(el => {
+          const elId = (el as HTMLElement).dataset.annotationId;
+          if (elId) {
+            const elParts = elId.split('_');
+            const elLastPart = elParts[elParts.length - 1];
+            const elBaseId = /^\d+$/.test(elLastPart) && elParts.length > 1
+              ? elParts.slice(0, -1).join('_')
+              : elId;
+            if (elBaseId === baseId) {
+              // Unwrap this element
+              const parent = el.parentNode;
+              if (parent) {
+                while (el.firstChild) {
+                  parent.insertBefore(el.firstChild, el);
+                }
+                parent.removeChild(el);
+                parent.normalize();
+              }
+            }
+          }
+        });
+      });
 
       this.saveState();
     }
