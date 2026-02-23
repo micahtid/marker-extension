@@ -32,41 +32,12 @@ export interface PageAnnotations {
   updatedAt: number;
 }
 
-const DB_NAME = 'annotate-saver-db';
-const DB_VERSION = 1;
-const STORE_NAME = 'annotations';
-
-let db: IDBDatabase | null = null;
-
-export async function initDB(): Promise<IDBDatabase> {
-  if (db) return db;
-
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-    request.onerror = () => reject(request.error);
-
-    request.onsuccess = () => {
-      db = request.result;
-      resolve(db);
-    };
-
-    request.onupgradeneeded = (event) => {
-      const database = (event.target as IDBOpenDBRequest).result;
-      if (!database.objectStoreNames.contains(STORE_NAME)) {
-        database.createObjectStore(STORE_NAME, { keyPath: 'url' });
-      }
-    };
-  });
-}
-
 function getPageKey(url: string): string {
-  // Normalize URL by removing hash and query params for consistency
   try {
     const urlObj = new URL(url);
-    return `${urlObj.origin}${urlObj.pathname}`;
+    return `marker:${urlObj.origin}${urlObj.pathname}`;
   } catch {
-    return url;
+    return `marker:${url}`;
   }
 }
 
@@ -75,52 +46,51 @@ export async function saveAnnotations(
   textAnnotations: TextAnnotation[],
   drawAnnotations: DrawAnnotation[]
 ): Promise<void> {
-  const database = await initDB();
   const pageKey = getPageKey(url);
 
+  const data: PageAnnotations = {
+    url: pageKey,
+    textAnnotations,
+    drawAnnotations,
+    updatedAt: Date.now(),
+  };
+
   return new Promise((resolve, reject) => {
-    const transaction = database.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-
-    const data: PageAnnotations = {
-      url: pageKey,
-      textAnnotations,
-      drawAnnotations,
-      updatedAt: Date.now(),
-    };
-
-    const request = store.put(data);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve();
+    chrome.storage.local.set({ [pageKey]: data }, () => {
+      if (chrome.runtime.lastError) {
+        reject(chrome.runtime.lastError);
+      } else {
+        resolve();
+      }
+    });
   });
 }
 
 export async function loadAnnotations(url: string): Promise<PageAnnotations | null> {
-  const database = await initDB();
   const pageKey = getPageKey(url);
 
   return new Promise((resolve, reject) => {
-    const transaction = database.transaction([STORE_NAME], 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.get(pageKey);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result || null);
+    chrome.storage.local.get(pageKey, (result) => {
+      if (chrome.runtime.lastError) {
+        reject(chrome.runtime.lastError);
+      } else {
+        resolve((result[pageKey] as PageAnnotations) || null);
+      }
+    });
   });
 }
 
 export async function clearAnnotations(url: string): Promise<void> {
-  const database = await initDB();
   const pageKey = getPageKey(url);
 
   return new Promise((resolve, reject) => {
-    const transaction = database.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.delete(pageKey);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve();
+    chrome.storage.local.remove(pageKey, () => {
+      if (chrome.runtime.lastError) {
+        reject(chrome.runtime.lastError);
+      } else {
+        resolve();
+      }
+    });
   });
 }
 

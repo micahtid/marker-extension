@@ -1,5 +1,4 @@
 import {
-  initDB,
   saveAnnotations,
   loadAnnotations,
   generateId,
@@ -389,14 +388,17 @@ class AnnotateSaver {
   constructor() {
     this.boundHandleTextSelection = this.handleTextSelection.bind(this);
     this.boundHandleSelectionChange = this.handleSelectionChange.bind(this);
+    this.setupMessageListener();
     this.init();
   }
 
   private async init() {
     injectStyles();
-    await initDB();
-    await this.loadSavedAnnotations();
-    this.setupMessageListener();
+    try {
+      await this.loadSavedAnnotations();
+    } catch (err) {
+      console.error('Failed to initialize annotations:', err);
+    }
   }
 
   private setupMessageListener() {
@@ -802,8 +804,8 @@ class AnnotateSaver {
     e.preventDefault();
 
     this.isDrawing = true;
-    const x = e.pageX;
-    const y = e.pageY;
+    const x = e.clientX + window.scrollX;
+    const y = e.clientY + window.scrollY;
 
     if (this.isErasing) {
       this.eraseAtPoint(x, y);
@@ -820,8 +822,8 @@ class AnnotateSaver {
     if (!this.isDrawing || !this.canvas) return;
     e.preventDefault();
 
-    const x = e.pageX;
-    const y = e.pageY;
+    const x = e.clientX + window.scrollX;
+    const y = e.clientY + window.scrollY;
 
     if (this.isErasing) {
       this.eraseAtPoint(x, y);
@@ -845,22 +847,36 @@ class AnnotateSaver {
     if (!this.canvas?.classList.contains('active')) return;
     e.preventDefault();
     const touch = e.touches[0];
-    const mouseEvent = new MouseEvent('mousedown', {
-      clientX: touch.clientX,
-      clientY: touch.clientY,
-    });
-    this.handleMouseDown(mouseEvent);
+    const x = touch.clientX + window.scrollX;
+    const y = touch.clientY + window.scrollY;
+
+    this.isDrawing = true;
+
+    if (this.isErasing) {
+      this.eraseAtPoint(x, y);
+    } else {
+      this.currentPath = {
+        points: [{ x, y }],
+        color: this.drawColor,
+        width: this.drawWidth,
+      };
+    }
   }
 
   private handleTouchMove(e: TouchEvent) {
     if (!this.isDrawing) return;
     e.preventDefault();
     const touch = e.touches[0];
-    const mouseEvent = new MouseEvent('mousemove', {
-      clientX: touch.clientX,
-      clientY: touch.clientY,
-    });
-    this.handleMouseMove(mouseEvent);
+    const x = touch.clientX + window.scrollX;
+    const y = touch.clientY + window.scrollY;
+
+    if (this.isErasing) {
+      this.eraseAtPoint(x, y);
+    } else if (this.currentPath) {
+      this.currentPath.points.push({ x, y });
+      this.redrawCanvas();
+      this.drawPath(this.currentPath);
+    }
   }
 
   private eraseAtPoint(x: number, y: number) {
